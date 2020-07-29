@@ -1,7 +1,7 @@
 const ccxt = require("ccxt");
-const logger = require("../../server/winston")(module);
+const logger = require("./winston")(module);
 const { InfluxDB, Point, HttpError } = require("@influxdata/influxdb-client");
-const { url, token, org, listedExchanges } = require("./env");
+const { url, token, org, listedSources } = require("./env");
 const argv = require('yargs').argv
 
 const queryApi = new InfluxDB({ url, token }).getQueryApi(org);
@@ -71,7 +71,10 @@ const getLastOHLCVTimestamp = (exchange, symbol, tf, since) =>
     const fluxQuery = `
       from(bucket:"${exchange}")
         |> range(start:${since})
-        |> filter(fn: (r) => r._measurement == "${symbol}" and r.tf == "${tf}" and r._field == "close")
+        |> filter(fn: (r) => r._measurement == "ohlcv" and
+          r.symbol == "${symbol}" and
+          r.tf == "${tf}" and
+          r._field == "close")
         |> last()`
     queryApi.queryRows(fluxQuery, {
       next(row, tableMeta) {
@@ -97,9 +100,7 @@ const queryExchange = async (exchangeName) => {
 const main = async () => {
   try {
     let since;
-    let exchanges = listedExchanges;
-    let symbol =  'BTC/USD';
-    let tf = '1m';
+    let sources = listedSources;
     
     if (argv.query) {
       queryExchange(argv.query)
@@ -109,22 +110,19 @@ const main = async () => {
       since = 0
     if (argv.year)
       since = new Date(`${argv.year}, 1, 1`)
-    if (argv._.length)
-      exchanges = listedExchanges.filter(e => argv._.includes(e))
-    if (argv.tf)
-      tf = argv.tf
-    if (argv.symbol)
-      symbol = argv.symbol
-    
-    for (const exchange of exchanges) {
-      if (since === undefined)
-        since = await getLastOHLCVTimestamp(exchange, symbol, tf, 0);
-      if (since === undefined)
-        throw `Can not fetch OHLCV data for ${exchange} without a starting time'`;
+    if (argv._.length > 0)
+      sources = argv._;
 
-      logger.info(`Updating OHLCV data in ${exchanges}, for ${symbol} and timeframe ${tf} since ${since}`);
-      const writeApi = new InfluxDB({ url, token }).getWriteApi(org, exchange, "ms");
-      await fetchOHLCV(exchange, symbol, tf, since, writeApi);
+    for (const source of sources) {
+      const [exchangeName, symbol, tf] = source.split('-');
+      if (since === undefined)
+        since = await getLastOHLCVTimestamp(exchangeName, symbol, tf, 0);
+      if (since === undefined)
+        throw `Can not fetch OHLCV data for ${exchangeName} without a starting time; use --origin if its the first time'`;
+
+      logger.info(`Updating OHLCV data in ${exchangeName}, for ${symbol} and timeframe ${tf} since ${since}`);
+      const writeApi = new InfluxDB({ url, token }).getWriteApi(org, exchangeName, "ms");
+      await fetchOHLCV(exchangeName, symbol, tf, since, writeApi);
       writeApi
         .close()
         .then(() => {
