@@ -23,18 +23,33 @@ const flush = (writeApi) => {
     });   
 }
 
+const getParams = (exchange, since) => {
+  switch(exchange) {
+    case 'bitmex': 
+      return {
+        startTime: since,
+        count: 750,
+      }
+    case 'bitfinex':
+      return {
+        start: since.getTime(),
+        limit: 500
+      }
+    default:
+      return {}
+  }
+}
+
 const fetchOHLCV = async (exchangeName, symbol, tf, since = 0, writeApi) => {
   try {
     if (since === undefined)
       throw 'Can not fetch data; invalid starting date';
+    since = new Date(since);
     const now = new Date();
     const exchange = new ccxt[exchangeName] ();
-    since = new Date(since);
+    const params = getParams(exchangeName, since);
     while (since < now) {
-      let partial = await exchange.fetchOHLCV(symbol, tf, null, null, {
-        startTime: since,
-        count: 750,
-      });
+      let partial = await exchange.fetchOHLCV(symbol, tf, null, null, params);
       logger.info(`Found ${partial.length} OHLCV datapoints in ${exchangeName} for ${symbol}`);
       let lastTs = 0;
       for (const e of partial) {
@@ -42,7 +57,6 @@ const fetchOHLCV = async (exchangeName, symbol, tf, since = 0, writeApi) => {
         const [ts, open, high, low, close, volume] = e;
         lastTs = new Date(ts);
         const p = new Point(`ohlcv`)
-          .tag("exchange", exchangeName)
           .tag("symbol", symbol)
           .tag("tf", tf)
           .floatField("open", open)
@@ -55,7 +69,7 @@ const fetchOHLCV = async (exchangeName, symbol, tf, since = 0, writeApi) => {
       }      
       logger.info(`Successful fetch from ${since} to ${lastTs}`)
       flush(writeApi);   
-      if (since === new Date(partial[partial.length - 1][0]))
+      if (partial.length <= 2)
         break;
       since = new Date(partial[partial.length - 1][0]);
       await sleep(exchange.rateLimit);
@@ -65,12 +79,12 @@ const fetchOHLCV = async (exchangeName, symbol, tf, since = 0, writeApi) => {
   }
 }
 
-const getLastOHLCVTimestamp = (exchange, symbol, tf, since) =>
+const getLastOHLCVTimestamp = (exchange, symbol, tf) =>
   new Promise((resolve, reject) => {
     let lastTimestamp;
     const fluxQuery = `
       from(bucket:"${exchange}")
-        |> range(start:${since})
+        |> range(start:0)
         |> filter(fn: (r) => r._measurement == "ohlcv" and
           r.symbol == "${symbol}" and
           r.tf == "${tf}" and
@@ -106,6 +120,12 @@ const main = async () => {
       queryExchange(argv.query)
       return;
     }
+    if (argv.lastTime) {
+      const [exchange, symbol, tf] = argv.lastTime.split('-');
+      const lastTimestamp = await getLastOHLCVTimestamp(exchange, symbol, tf)
+      logger.info(`${exchange}-${symbol}-${tf} was updated last time on ${lastTimestamp}`)
+      return;
+    }
     if (argv.origin)
       since = 0
     if (argv.year)
@@ -116,7 +136,7 @@ const main = async () => {
     for (const source of sources) {
       const [exchangeName, symbol, tf] = source.split('-');
       if (since === undefined)
-        since = await getLastOHLCVTimestamp(exchangeName, symbol, tf, 0);
+        since = await getLastOHLCVTimestamp(exchangeName, symbol, tf);
       if (since === undefined)
         since = 0;
 
