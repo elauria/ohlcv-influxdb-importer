@@ -118,7 +118,7 @@ const main = async () => {
       if (since === undefined)
         since = await getLastOHLCVTimestamp(exchangeName, symbol, tf, 0);
       if (since === undefined)
-        throw `Can not fetch OHLCV data for ${exchangeName} without a starting time; use --origin if its the first time'`;
+        since = 0;
 
       logger.info(`Updating OHLCV data in ${exchangeName}, for ${symbol} and timeframe ${tf} since ${since}`);
       const writeApi = new InfluxDB({ url, token }).getWriteApi(org, exchangeName, "ms");
