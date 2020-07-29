@@ -47,8 +47,8 @@ const fetchOHLCV = async (exchangeName, symbol, tf, since = 0, writeApi) => {
     since = new Date(since);
     const now = new Date();
     const exchange = new ccxt[exchangeName] ();
-    const params = getParams(exchangeName, since);
     while (since < now) {
+      const params = getParams(exchangeName, since);
       let partial = await exchange.fetchOHLCV(symbol, tf, null, null, params);
       logger.info(`Found ${partial.length} OHLCV datapoints in ${exchangeName} for ${symbol}`);
       let lastTs = 0;
